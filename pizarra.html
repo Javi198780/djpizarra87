@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pizarra Interactiva con Fabric.js 🧠</title>
+
+  <!-- Font Awesome & Fabric.js -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+
+  <style>
+    body {margin:0; font-family:Arial;}
+    #container {display:flex; height:650px; border:2px solid #333;}
+    #panel {width:220px; background:#222; color:white; padding:10px; display:flex; flex-direction:column; gap:6px;}
+    #panel button, #panel input, #panel select {
+      padding:6px; border:none; border-radius:4px; cursor:pointer; font-size:14px;
+    }
+    #panel button.active {background:#007bff; color:white;}
+    #canvas-container {flex:1; position:relative;}
+    canvas {border:1px solid #666;}
+  </style>
+</head>
+
+<body>
+  <div id="container">
+    <div id="panel">
+      <button id="btnSelect" class="active">🔹 Seleccionar</button>
+      <button id="btnMove">🖐️ Mover</button>
+      <button id="btnPencil">✏️ Lápiz</button>
+      <button id="btnLine">📏 Línea</button>
+      <button id="btnArrow">➡️ Flecha</button>
+      <button id="btnRect">▭ Rectángulo</button>
+      <button id="btnCircle">⚪ Círculo</button>
+      <button id="btnOval">⭕ Óvalo</button>
+      <button id="btnTriangle">🔺 Triángulo equilátero</button>
+      <button id="btnRightTriangle">🧮 Triángulo rectángulo</button>
+      <button id="btnPolygon">🔷 Polígono</button>
+      <button id="btnText">🅰️ Texto</button>
+      <button id="btnDelete">❌ Borrar selección</button>
+      <button id="btnClear">🧹 Limpiar todo</button>
+      <button id="btnUndo">↩️ Deshacer</button>
+      <button id="btnRedo">↪️ Rehacer</button>
+      <button id="btnSave">💾 Guardar imagen</button>
+      <button id="btnGrid">🟦 Cuadrícula</button>
+
+      <label>Color:</label>
+      <input type="color" id="color" value="#00ff00">
+      <label>Tamaño:</label>
+      <input type="range" id="size" min="1" max="10" value="2">
+      <label>Lados (Polígono):</label>
+      <input type="number" id="sides" min="3" max="12" value="5">
+    </div>
+
+    <div id="canvas-container">
+      <canvas id="c" width="1000" height="650"></canvas>
+    </div>
+  </div>
+
+  <script>
+  const canvas = new fabric.Canvas('c', { backgroundColor: 'white' });
+  let currentTool = 'select';
+  let drawingObject = null;
+  let startX, startY;
+  let isDrawing = false;
+  let undoStack = [];
+  let redoStack = [];
+  let gridActive = false;
+
+  function saveState(){
+    undoStack.push(JSON.stringify(canvas.toJSON()));
+    if(undoStack.length > 50) undoStack.shift();
+    redoStack = [];
+  }
+
+  function setActiveButton(btn){
+    document.querySelectorAll('#panel button').forEach(b => b.classList.remove('active'));
+    if(btn) btn.classList.add('active');
+  }
+
+  function setTool(tool){
+    currentTool = tool;
+    canvas.isDrawingMode = (tool === 'pencil');
+    canvas.selection = (tool === 'select' || tool === 'move');
+    canvas.forEachObject(obj => obj.selectable = (tool === 'select' || tool === 'move'));
+  }
+
+  const tools = [
+    ['btnSelect','select'], ['btnMove','move'], ['btnPencil','pencil'],
+    ['btnLine','line'], ['btnArrow','arrow'], ['btnRect','rect'],
+    ['btnCircle','circle'], ['btnOval','oval'], ['btnTriangle','triangle'],
+    ['btnRightTriangle','rightTriangle'], ['btnPolygon','polygon'], ['btnText','text']
+  ];
+  tools.forEach(([id, tool]) => {
+    document.getElementById(id).onclick = () => { setTool(tool); setActiveButton(document.getElementById(id)); }
+  });
+
+  function deleteSelected(){
+    const activeObjects = canvas.getActiveObjects();
+    if (activeObjects.length > 0) {
+      activeObjects.forEach(o => canvas.remove(o));
+      canvas.discardActiveObject();
+      saveState();
+      canvas.renderAll();
+    }
+  }
+  document.getElementById('btnDelete').onclick = deleteSelected;
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Delete' || e.key === 'Supr') deleteSelected();
+  });
+
+  document.getElementById('btnClear').onclick = () => {
+    if(confirm("¿Limpiar todo el lienzo?")){
+      canvas.clear(); drawGrid(); saveState();
+    }
+  };
+  document.getElementById('btnUndo').onclick = () => {
+    if(undoStack.length>0){
+      redoStack.push(JSON.stringify(canvas.toJSON()));
+      canvas.loadFromJSON(undoStack.pop(), ()=>canvas.renderAll());
+    }
+  };
+  document.getElementById('btnRedo').onclick = () => {
+    if(redoStack.length>0){
+      undoStack.push(JSON.stringify(canvas.toJSON()));
+      canvas.loadFromJSON(redoStack.pop(), ()=>canvas.renderAll());
+    }
+  };
+  document.getElementById('btnSave').onclick = () => {
+    const url=canvas.toDataURL({format:'png', quality:1.0});
+    const a=document.createElement('a'); a.href=url; a.download='dibujo.png'; a.click();
+  };
+  document.getElementById('btnGrid').onclick = () => {
+    gridActive=!gridActive; drawGrid();
+    document.getElementById('btnGrid').classList.toggle('active');
+  };
+
+  function drawGrid(){
+    canvas.backgroundColor = 'white';
+    canvas.getObjects('line').filter(l=>l.gridLine).forEach(l=>canvas.remove(l));
+    if(gridActive){
+      const step=50;
+      for(let x=0;x<=canvas.width;x+=step){
+        const v=new fabric.Line([x,0,x,canvas.height],{stroke:'rgba(0,0,0,0.1)',selectable:false,evented:false});
+        v.gridLine=true; canvas.add(v);
+      }
+      for(let y=0;y<=canvas.height;y+=step){
+        const h=new fabric.Line([0,y,canvas.width,y],{stroke:'rgba(0,0,0,0.1)',selectable:false,evented:false});
+        h.gridLine=true; canvas.add(h);
+      }
+    }
+    canvas.renderAll();
+  }
+
+  // === DIBUJO ===
+  canvas.on('mouse:down', function(o){
+    if(currentTool==='select' || currentTool==='move') return;
+    const pointer = canvas.getPointer(o.e);
+    startX = pointer.x; startY = pointer.y;
+    const color = document.getElementById('color').value;
+    const size = parseInt(document.getElementById('size').value);
+    const sides = parseInt(document.getElementById('sides').value);
+    drawingObject = null;
+
+    switch(currentTool){
+      case 'line':
+        drawingObject = new fabric.Line([startX,startY,startX,startY],{stroke:color,strokeWidth:size,selectable:false});
+        break;
+      case 'arrow':
+        drawingObject = new fabric.Line([startX,startY,startX,startY],{
+          stroke:color,strokeWidth:size,selectable:false,hasControls:false
+        });
+        break;
+      case 'rect':
+        drawingObject = new fabric.Rect({left:startX,top:startY,width:0,height:0,stroke:color,fill:'',strokeWidth:size,selectable:false});
+        break;
+      case 'circle':
+        drawingObject = new fabric.Circle({left:startX,top:startY,radius:0,stroke:color,fill:'',strokeWidth:size,originX:'center',originY:'center',selectable:false});
+        break;
+      case 'oval':
+        drawingObject = new fabric.Ellipse({left:startX,top:startY,rx:0,ry:0,stroke:color,fill:'',strokeWidth:size,originX:'center',originY:'center',selectable:false});
+        break;
+      case 'triangle':
+        drawingObject = new fabric.Triangle({left:startX,top:startY,width:0,height:0,stroke:color,fill:'',strokeWidth:size,selectable:false});
+        break;
+      case 'rightTriangle':
+        drawingObject = new fabric.Polygon([
+          {x:0,y:0},
+          {x:100,y:0},
+          {x:0,y:100}
+        ], {
+          left:startX, top:startY,
+          stroke:color, fill:'', strokeWidth:size,
+          selectable:false, objectCaching:false
+        });
+        break;
+      case 'polygon':
+        const pts = [];
+        for(let i=0;i<sides;i++){ const a=(i/sides)*2*Math.PI; pts.push({x:startX+50*Math.cos(a),y:startY+50*Math.sin(a)});}
+        drawingObject = new fabric.Polygon(pts,{stroke:color,fill:'',strokeWidth:size,selectable:false});
+        break;
+      case 'text':
+        drawingObject = new fabric.IText('Escribe aquí',{left:startX,top:startY,fontSize:24,fill:color});
+        canvas.add(drawingObject);
+        drawingObject.enterEditing();
+        drawingObject.selectAll();
+        saveState();
+        drawingObject=null;
+        return;
+    }
+    if(drawingObject){ canvas.add(drawingObject); isDrawing=true; }
+  });
+
+  canvas.on('mouse:move', function(o){
+    if(!isDrawing || !drawingObject) return;
+    const pointer = canvas.getPointer(o.e);
+    const x = pointer.x, y = pointer.y;
+    const sides = parseInt(document.getElementById('sides').value);
+
+    switch(currentTool){
+      case 'line': drawingObject.set({x2:x, y2:y}); break;
+      case 'arrow':
+        drawingObject.set({x2:x, y2:y});
+        break;
+      case 'rect': drawingObject.set({width:x-startX, height:y-startY}); break;
+      case 'circle': drawingObject.set({radius:Math.sqrt((x-startX)**2 + (y-startY)**2)/2,left:(startX+x)/2,top:(startY+y)/2}); break;
+      case 'oval': drawingObject.set({rx:Math.abs(x-startX)/2, ry:Math.abs(y-startY)/2,left:(startX+x)/2,top:(startY+y)/2}); break;
+      case 'triangle': drawingObject.set({width:x-startX, height:y-startY}); break;
+      case 'rightTriangle':
+        const width = x - startX;
+        const height = y - startY;
+        const points = [{x:0,y:0},{x:width,y:0},{x:0,y:height}];
+        drawingObject.set({points});
+        drawingObject.setCoords();
+        break;
+      case 'polygon':
+        const pts = [];
+        const r = Math.sqrt((x-startX)**2 + (y-startY)**2);
+        for(let i=0;i<sides;i++){ const a=(i/sides)*2*Math.PI; pts.push({x:startX+r*Math.cos(a),y:startY+r*Math.sin(a)});}
+        drawingObject.set({points:pts});
+        break;
+    }
+
+    // === Flecha ===
+    if(currentTool==='arrow'){
+      if(drawingObject.arrowHead) canvas.remove(drawingObject.arrowHead);
+      const angle = Math.atan2(y - startY, x - startX);
+      const headLen = 10 + parseInt(document.getElementById('size').value)*2;
+      const arrowX = x - headLen * Math.cos(angle - Math.PI/6);
+      const arrowY = y - headLen * Math.sin(angle - Math.PI/6);
+      const arrowX2 = x - headLen * Math.cos(angle + Math.PI/6);
+      const arrowY2 = y - headLen * Math.sin(angle + Math.PI/6);
+      drawingObject.arrowHead = new fabric.Polygon(
+        [{x:x,y:y},{x:arrowX,y:arrowY},{x:arrowX2,y:arrowY2}],
+        {fill:document.getElementById('color').value, selectable:false, evented:false}
+      );
+      canvas.add(drawingObject.arrowHead);
+    }
+
+    canvas.renderAll();
+  });
+
+  canvas.on('mouse:up', function(){
+    if (drawingObject) { drawingObject.set({selectable:true}); saveState(); }
+    drawingObject=null;
+    isDrawing=false;
+    canvas.renderAll();
+  });
+
+  drawGrid();
+  </script>
+</body>
+</html>
